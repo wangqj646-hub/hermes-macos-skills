@@ -1,197 +1,195 @@
----
-name: macos-ui-automation
-category: macos
-description: macOS 自动化三层决策框架 — CLI → MCP UI Tree → Computer Use 兜底。
----
-
-# macOS UI 自动化三层策略
-
-## 核心原则
-
-**能脚本化的绝不碰 GUI，能拿结构化的绝不靠截图，实在没辙了再让视觉模型兜底。**
-
-```
-Tier 1: CLI 命令      (毫秒级，最可靠)
-    ↓ 不行？
-Tier 2: MCP UI Tree   (秒级，结构化)
-    ↓ 不行？
-Tier 3: Computer Use  (5-15秒，视觉兜底)
-```
-
-## Tier 1: CLI 命令（首选）
-
-### 系统设置与控制
-```bash
-# 打开 App
-open -a "AppName"
-
-# 系统偏好设置（通过 AppleScript）
-osascript -e 'tell application "System Preferences" to reveal pane id "com.apple.preference.display"'
-
-# 音量控制
-osascript -e "set volume output volume 50"
-
-# 亮屏/休眠
-osascript -e 'tell application "System Events" to tell process "Finder" to keystroke "q" using {command down}'
-
-# 蓝牙、WiFi、飞行模式
-networksetup -setairportpower en0 on/off
-```
-
-### 文件操作
-```bash
-# 查找文件
-mdfind "kMDItemFSName == '*.xlsx'"        # Spotlight 搜索
-find ~/Documents -name "*.xlsx"            # 传统 find
-
-# 文件信息
-mdls path/to/file                          # 元数据
-stat path/to/file                          # 文件属性
-```
-
-### 应用控制
-```bash
-# 获取运行中的应用
-osascript -e 'tell application "System Events" to get name of every application process whose background only is false'
-
-# 强制退出
-killall -9 "AppName"
-
-# AppleScript 操作应用
-osascript -e 'tell application "Safari" to open location "https://example.com"'
-osascript -e 'tell application "Messages" to send "hello" to buddy "xxx"'
-```
-
-### 网络与 API
-```bash
-# 网络请求
-curl -s https://api.example.com/data | jq '.results'
-
-# 下载文件
-curl -O https://example.com/file.zip
-```
-
-### 媒体控制
-```bash
-# 播放/暂停
-osascript -e 'tell application "Spotify" to playpause'
-
-# 截图
-screencapture -x /tmp/screenshot.png       # 无声音截图
-screencapture -R x,y,w,h /tmp/crop.png     # 区域截图
-```
-
-## Tier 2: MCP UI Tree 结构化搜索（次选）
-
-当 CLI 无法精确操作时，使用 macOS Accessibility API 暴露的结构化 UI 树。
-
-### 可用工具
-
-| MCP 工具 | 功能 |
-|---|---|
-| `list_running_applications` | 列出所有运行中的应用 |
-| `get_app_overview` | 快速获取所有应用及窗口浅层信息 |
-| `find_elements_in_app` | 在指定 App 内深度搜索 UI 元素树 |
-| `find_elements` | 用 JSONPath 在当前聚焦窗口搜索 UI 元素 |
-| `get_element_details` | 获取某个元素的完整结构（含子节点） |
-| `click_element_by_selector` | 通过 JSONPath 选择器精准点击 |
-| `type_text_to_element_by_selector` | 通过 JSONPath 选择器输入文字 |
-
-### JSONPath 常用选择器
-
-```
-# 按标识符查找
-$..[?(@.ax_identifier=='loginButton')]
-
-# 按角色查找
-$..[?(@.ax_role=='AXButton')]
-
-# 按标题/文字查找
-$..[?(@.ax_title=='保存')]
-
-# 组合条件
-$..[?(@.ax_role=='AXTextField' && @.ax_identifier=='searchField')]
-
-# 获取所有可交互元素
-$..[?(@.ax_identifier)]
-```
-
-### 标准操作流程
-
-```
-1. get_app_overview              → 确认目标应用和窗口状态
-2. find_elements_in_app(app="X")  → 搜索目标元素
-3. get_element_details           → 确认元素结构正确
-4. click_element_by_selector      → 执行操作
-```
-
-### 适用场景
-- ✅ 原生 macOS App（Finder、系统设置、备忘录、日历等）
-- ✅ 使用标准 AppKit 控件的应用
-- ✅ 需要精准定位按钮/输入框/菜单项的场景
-
-### 不适用场景
-- ❌ 网页应用（Safari/Chrome 内页面）— Accessibility API 拿到的只是浏览器外壳
-- ❌ 高度自定义 UI（游戏、Electron 应用的部分组件）
-- ❌ 需要视觉判断的场景（验证码、图片识别）
-
-## Tier 3: Computer Use 截图视觉兜底（最后手段）
-
-当 CLI 和 MCP UI Tree 都无法解决时，使用截图 + 多模态 LLM 方案。
-
-详见 `macos-computer-use` 技能。
-
-### 适用场景
-- 网页应用（Safari/Chrome 内页面）
-- 自定义 UI 应用（如正新鸡排 OA 系统 `http://oa.zhengxinfood.com:8555/`）
-- 需要视觉理解的内容（图片中的文字、验证码、图表）
-- Electron 应用等 Accessibility API 不友好的场景
-
-### 核心脚本
-```bash
-# 列出屏幕所有可交互元素
-~/.hermes/scripts/screen_agent.py --list
-
-# 查找并执行操作
-~/.hermes/scripts/screen_agent.py "点击登录按钮"
-
-# 安全预览（不实际操作）
-~/.hermes/scripts/screen_agent.py --dry-run "点击设置"
-
-# 纯截图解析（返回 JSON 坐标）
-~/.hermes/scripts/screen_parser.py --query "找登录按钮" --output json
-```
-
-## 决策流程图
-
-```
-主人下达 UI 操作指令
-        ↓
-能用 CLI/AppleScript 直接完成？
-    ├── Yes → Tier 1 执行 ✅
-    └── No ↓
-        ↓
-目标是否是原生 macOS App？
-    ├── Yes → Tier 2 MCP UI Tree
-    │           → find_elements → click/type ✅
-    └── No ↓
-        ↓
-        Tier 3 Computer Use 兜底
-        → 截图 → 多模态解析 → 坐标操作 ✅
-```
-
-## 注意事项
-
-1. **权限要求**
-   - Tier 1: 通常不需要特殊权限
-   - Tier 2: 需要辅助功能权限（系统设置 → 隐私与安全 → 辅助功能）
-   - Tier 3: 需要屏幕录制权限 + 辅助功能权限
-
-2. **安全原则**
-   - 破坏性操作（删除、支付确认等）必须先 dry-run 或确认
-   - Tier 3 的 pyautogui 已启用 FAILSAFE（鼠标移到左上角紧急中止）
-
-3. **性能对比**
-   - Tier 1: < 1 秒
-   - Tier 2: 1-3 秒
-   - Tier 3: 5-15 秒（含截图、LLM 调用、解析）
+     1|---
+     2|name: macos-ui-automation
+     3|category: macos
+     4|description: "Three-tier macOS automation decision framework: CLI → MCP UI Tree → Computer Use fallback."
+     5|---
+     6|
+     7|# macOS UI Automation — Three-Tier Strategy
+     8|
+     9|## Core Principle
+    10|
+    11|**Never touch the GUI if it can be scripted. Never use a screenshot if structured data is available. Only fall back to the vision model when all else fails.**
+    12|
+    13|```
+    14|Tier 1: CLI Commands      (milliseconds, most reliable)
+    15|    ↓ Doesn't work?
+    16|Tier 2: MCP UI Tree       (seconds, structured)
+    17|    ↓ Doesn't work?
+    18|Tier 3: Computer Use      (5-15 seconds, visual fallback)
+    19|```
+    20|
+    21|## Tier 1: CLI Commands (First Choice)
+    22|
+    23|### System Settings & Control
+    24|```bash
+    25|# Open an app
+    26|open -a "AppName"
+    27|
+    28|# System Preferences (via AppleScript)
+    29|osascript -e 'tell application "System Settings" to reveal pane id "com.apple.preference.displays"'
+    30|
+    31|# Volume control
+    32|osascript -e "set volume output volume 50"
+    33|
+    34|# WiFi on/off
+    35|networksetup -setairportpower en0 on/off
+    36|```
+    37|
+    38|### File Operations
+    39|```bash
+    40|# Find files
+    41|mdfind "kMDItemFSName == '*.xlsx'"        # Spotlight search
+    42|find ~/Documents -name "*.xlsx"            # Traditional find
+    43|
+    44|# File metadata
+    45|mdls path/to/file                          # Metadata
+    46|stat path/to/file                          # File attributes
+    47|```
+    48|
+    49|### Application Control
+    50|```bash
+    51|# List running apps
+    52|osascript -e 'tell application "System Events" to get name of every application process whose background only is false'
+    53|
+    54|# Force quit
+    55|killall -9 "AppName"
+    56|
+    57|# AppleScript app control
+    58|osascript -e 'tell application "Safari" to open location "https://example.com"'
+    59|osascript -e 'tell application "Messages" to send "hello" to buddy "xxx"'
+    60|```
+    61|
+    62|### Network & APIs
+    63|```bash
+    64|# API calls
+    65|curl -s https://api.example.com/data | jq '.results'
+    66|
+    67|# Download files
+    68|curl -O https://example.com/file.zip
+    69|```
+    70|
+    71|### Media Control
+    72|```bash
+    73|# Play/Pause
+    74|osascript -e 'tell application "Spotify" to playpause'
+    75|
+    76|# Screenshot
+    77|screencapture -x /tmp/screenshot.png       # Silent screenshot
+    78|screencapture -R x,y,w,h /tmp/crop.png     # Region capture
+    79|```
+    80|
+    81|## Tier 2: MCP UI Tree Structured Search (Second Choice)
+    82|
+    83|When CLI cannot precisely operate, use the structured UI tree exposed by the macOS Accessibility API.
+    84|
+    85|### Available Tools
+    86|
+    87|| MCP Tool | Purpose |
+    88||---|---|
+    89|| `list_running_applications` | List all running applications |
+    90|| `get_app_overview` | Quick overview of all apps and their windows |
+    91|| `find_elements_in_app` | Deep-search UI element tree within a specific app |
+    92|| `find_elements` | Search UI elements in the current focused window using JSONPath |
+    93|| `get_element_details` | Get full structure of an element (including children) |
+    94|| `click_element_by_selector` | Precise click via JSONPath selector |
+    95|| `type_text_to_element_by_selector` | Type text via JSONPath selector |
+    96|
+    97|### Common JSONPath Selectors
+    98|
+    99|```
+   100|# Find by identifier
+   101|$..[?(@.ax_identifier=='loginButton')]
+   102|
+   103|# Find by role
+   104|$..[?(@.ax_role=='AXButton')]
+   105|
+   106|# Find by title/text
+   107|$..[?(@.ax_title=='Save')]
+   108|
+   109|# Combined conditions
+   110|$..[?(@.ax_role=='AXTextField' && @.ax_identifier=='searchField')]
+   111|
+   112|# Get all interactive elements
+   113|$..[?(@.ax_identifier)]
+   114|```
+   115|
+   116|### Standard Workflow
+   117|
+   118|```
+   119|1. get_app_overview              → Confirm target app and window state
+   120|2. find_elements_in_app(app="X")  → Search for target elements
+   121|3. get_element_details           → Verify element structure is correct
+   122|4. click_element_by_selector      → Execute the operation
+   123|```
+   124|
+   125|### When to Use
+   126|- ✅ Native macOS apps (Finder, System Settings, Notes, Calendar, etc.)
+   127|- ✅ Apps using standard AppKit controls
+   128|- ✅ Scenarios requiring precise button/input/menu targeting
+   129|
+   130|### When NOT to Use
+   131|- ❌ Web apps (pages inside Safari/Chrome) — Accessibility API only sees the browser shell
+   132|- ❌ Highly custom UIs (games, some Electron app components)
+   133|- ❌ Scenarios requiring visual judgment (CAPTCHAs, image recognition)
+   134|
+   135|## Tier 3: Computer Use Visual Fallback (Last Resort)
+   136|
+   137|When both CLI and MCP UI Tree fail, use the screenshot + multimodal LLM approach.
+   138|
+   139|See the `macos-computer-use` skill for details.
+   140|
+   141|### When to Use
+   142|- Web apps (pages inside Safari/Chrome)
+   143|- Custom UI apps
+   144|- Content requiring visual understanding (text in images, CAPTCHAs, charts)
+   145|- Accessibility API unfriendly environments (e.g., Electron apps)
+   146|
+   147|### Core Scripts
+   148|```bash
+   149|# List all interactive elements on screen
+   150|~/.hermes/scripts/screen_agent.py --list
+   151|
+   152|# Find and execute an action
+   153|~/.hermes/scripts/screen_agent.py "click the login button"
+   154|
+   155|# Safe preview (no actual operation)
+   156|~/.hermes/scripts/screen_agent.py --dry-run "click settings"
+   157|
+   158|# Pure screenshot parsing (returns JSON coordinates)
+   159|~/.hermes/scripts/screen_parser.py --query "find login button" --output json
+   160|```
+   161|
+   162|## Decision Flow
+   163|
+   164|```
+   165|User requests a UI operation
+   166|        ↓
+   167|Can it be done with CLI/AppleScript directly?
+   168|    ├── Yes → Tier 1 execute ✅
+   169|    └── No ↓
+   170|        ↓
+   171|Is the target a native macOS app?
+   172|    ├── Yes → Tier 2 MCP UI Tree
+   173|    │           → find_elements → click/type ✅
+   174|    └── No ↓
+   175|        ↓
+   176|        Tier 3 Computer Use fallback
+   177|        → Screenshot → Multimodal parsing → Coordinate operation ✅
+   178|```
+   179|
+   180|## Important Notes
+   181|
+   182|1. **Permissions**
+   183|   - Tier 1: Usually no special permissions needed
+   184|   - Tier 2: Requires Accessibility permission (System Settings → Privacy & Security → Accessibility)
+   185|   - Tier 3: Requires Screen Recording + Accessibility permissions
+   186|
+   187|2. **Safety**
+   188|   - Always dry-run destructive operations (deletion, payment confirmation, etc.) first
+   189|   - Tier 3 pyautogui has FAILSAFE enabled (move mouse to top-left corner to abort)
+   190|
+   191|3. **Performance**
+   192|   - Tier 1: < 1 second
+   193|   - Tier 2: 1-3 seconds
+   194|   - Tier 3: 5-15 seconds (including screenshot, LLM call, parsing)
+   195|
